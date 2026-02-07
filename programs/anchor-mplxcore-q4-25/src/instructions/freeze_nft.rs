@@ -7,14 +7,59 @@ use mpl_core::{
 
 use crate::{error::MPLXCoreError, state::CollectionAuthority};
 
-// #[derive(Accounts)]
-// pub struct FreezeNft<'info> {
-//    // TODO
-// }
+#[derive(Accounts)]
+pub struct FreezeNft<'info> {
+    #[account(
+        mut,
+        constraint = authority.key() == collection_authority.creator @ MPLXCoreError::NotAuthorized,
+    )]
+    pub authority: Signer<'info>,
 
-// impl<'info> FreezeNft<'info> {
-//     pub fn freeze_nft(&mut self) -> Result<()> {
-//         // TODO
-//         Ok(())
-//     }
-// }
+    #[account(
+        mut,
+        constraint = collection.owner == &CORE_PROGRAM_ID @ MPLXCoreError::InvalidCollection,
+        constraint = !collection.data_is_empty() @ MPLXCoreError::CollectionNotInitialized
+    )]
+    /// CHECK: This will also be checked by core
+    pub collection: UncheckedAccount<'info>,
+
+    /// CHECK: checked by core
+    #[account(
+        mut,
+        constraint = asset.owner == &CORE_PROGRAM_ID,
+        constraint = !asset.data_is_empty()
+    )]
+    pub asset: UncheckedAccount<'info>,
+
+    #[account(
+        seeds = [b"collection_authority", collection.key().as_ref()],
+        bump
+    )]
+    pub collection_authority: Account<'info, CollectionAuthority>,
+
+    #[account(address = CORE_PROGRAM_ID)]
+    /// CHECK: This will also be checked by core
+    pub core_program: UncheckedAccount<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+impl<'info> FreezeNft<'info> {
+    pub fn freeze_nft(&mut self) -> Result<()> {
+        let signers_seeds: &[&[&[u8]]] = &[&[
+            b"collection_authority",
+            &self.collection.key().to_bytes(),
+            &[self.collection_authority.bump],
+        ]];
+
+        UpdatePluginV1CpiBuilder::new(&self.core_program.to_account_info())
+            .asset(&self.asset.to_account_info())
+            .collection(Some(&self.collection.to_account_info()))
+            .authority(Some(&self.collection_authority.to_account_info()))
+            .payer(&self.authority.to_account_info())
+            .plugin(Plugin::FreezeDelegate(FreezeDelegate { frozen: true }))
+            .system_program(&self.system_program.to_account_info())
+            .invoke_signed(signers_seeds)?;
+
+        Ok(())
+    }
+}
